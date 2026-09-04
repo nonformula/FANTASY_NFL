@@ -1,0 +1,15 @@
+# Personal settings — copy config.example.json to config.json and fill in
+config.json
+
+# Generated data
+cache/
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS
+.DS_Store
