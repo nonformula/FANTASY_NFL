@@ -120,9 +120,16 @@ def build_roster_data(config):
     players = []
     for pid in player_ids:
         p = player_db.get(pid, {})
+        # Team defenses are keyed by team code and carry no full_name.
+        name = p.get("full_name")
+        if not name:
+            if p.get("position") == "DEF":
+                name = f"{p.get('team') or pid} Defense"
+            else:
+                name = f"Unknown ({pid})"
         players.append({
             "player_id": pid,
-            "name": p.get("full_name", f"Unknown ({pid})"),
+            "name": name,
             "position": p.get("position", "?"),
             "team": p.get("team", "FA"),
             "is_starter": pid in starters,

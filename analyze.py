@@ -20,15 +20,30 @@ CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
+# Sleeper and nflverse disagree on a handful of team abbreviations. Without
+# this, an unmatched team silently renders as "BYE" — a false bye that reads
+# as "do not start this player."
+TEAM_ALIASES = {
+    "LAR": "LA",
+    "JAX": "JAC",
+    "WAS": "WSH",
+    "OAK": "LV",
+    "SD": "LAC",
+    "STL": "LA",
+}
+
+
 def get_team_schedule(schedule, team, week):
     """Find a team's opponent for a given week."""
+    candidates = {team, TEAM_ALIASES.get(team, team)}
+
     for game in schedule:
         if game.get("week") == week:
             home = game.get("home_team", "")
             away = game.get("away_team", "")
-            if home == team:
+            if home in candidates:
                 return f"vs {away}"
-            elif away == team:
+            elif away in candidates:
                 return f"@ {home}"
     return "BYE"
 
@@ -178,9 +193,20 @@ def generate_markdown(roster_data, starters, bench, week, season):
 **League:** {roster_data['league_name']} | **Scoring:** {roster_data['scoring_type']}
 **Matchup:** vs {roster_data['matchup']['opponent']}
 **Generated:** {now}
-
-## Current Starters
 """
+
+    # Early in a season nflverse has not published the current year yet, so the
+    # stat lines below are last year's. Say so, or they read as current form.
+    import pull_stats
+
+    if pull_stats.LAST_STATS_SEASON and pull_stats.LAST_STATS_SEASON != season:
+        md += (
+            f"\n> **Note:** {season} stats are not published yet. All stat lines"
+            f" below are **{pull_stats.LAST_STATS_SEASON} season totals**, shown"
+            f" as a baseline — not current-season form.\n"
+        )
+
+    md += "\n## Current Starters\n"
 
     # Group starters by position
     pos_order = ["QB", "RB", "WR", "TE", "K", "DEF"]
