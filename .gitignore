@@ -3,7 +3,8 @@ config.json
 
 # Generated data
 cache/
-output/
+output/*
+!output/*_analysis.md
 
 # Python
 __pycache__/
