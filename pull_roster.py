@@ -11,12 +11,12 @@ import urllib.request
 
 SLEEPER_BASE = "https://api.sleeper.app/v1"
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 
 def load_config():
-    config_path = os.path.join(os.path.dirname(__file__), "config.json")
-    with open(config_path, "r") as f:
+    with open(CONFIG_PATH, "r") as f:
         return json.load(f)
 
 
@@ -70,6 +70,31 @@ def get_matchups(league_id, week):
     return api_get(f"/league/{league_id}/matchups/{week}")
 
 
+def _resolve_players(player_ids, player_db, starters):
+    """Resolve a list of Sleeper player_ids into name/position/team dicts."""
+    players = []
+    for pid in player_ids:
+        p = player_db.get(pid, {})
+        # Team defenses are keyed by team code and carry no full_name.
+        name = p.get("full_name")
+        if not name:
+            if p.get("position") == "DEF":
+                name = f"{p.get('team') or pid} Defense"
+            else:
+                name = f"Unknown ({pid})"
+        players.append({
+            "player_id": pid,
+            "name": name,
+            "position": p.get("position", "?"),
+            "team": p.get("team", "FA"),
+            "is_starter": pid in starters,
+            "injury_status": p.get("injury_status", None),
+            "age": p.get("age", None),
+            "number": p.get("number", None),
+        })
+    return players
+
+
 def build_roster_data(config):
     """Main function: returns a dict with your roster, matchup, and league info."""
     username = config["sleeper_username"]
@@ -116,27 +141,7 @@ def build_roster_data(config):
 
     # Get player details
     player_db = get_player_db()
-
-    players = []
-    for pid in player_ids:
-        p = player_db.get(pid, {})
-        # Team defenses are keyed by team code and carry no full_name.
-        name = p.get("full_name")
-        if not name:
-            if p.get("position") == "DEF":
-                name = f"{p.get('team') or pid} Defense"
-            else:
-                name = f"Unknown ({pid})"
-        players.append({
-            "player_id": pid,
-            "name": name,
-            "position": p.get("position", "?"),
-            "team": p.get("team", "FA"),
-            "is_starter": pid in starters,
-            "injury_status": p.get("injury_status", None),
-            "age": p.get("age", None),
-            "number": p.get("number", None),
-        })
+    players = _resolve_players(player_ids, player_db, starters)
 
     # Get matchup info
     matchups = get_matchups(league_id, week)
@@ -180,6 +185,60 @@ def build_roster_data(config):
             "your_points": my_points,
             "opponent_points": opponent_points,
         },
+    }
+
+
+def get_league_rosters(config):
+    """
+    Pull every roster in the league, resolved to player names/positions —
+    not just your own. build_roster_data() throws this data away once it
+    finds your roster; this is the same set of API calls, kept instead, for
+    trade-opportunity and opponent-weakness scans. The weekly report never
+    calls this — that report stays scoped to your own team by design.
+    """
+    username = config["sleeper_username"]
+    league_id = config["league_id"]
+    week = config["current_week"]
+
+    user_id, _ = get_user_id(username)
+    rosters = get_rosters(league_id)
+    users = get_league_users(league_id)
+    user_map = {u["user_id"]: u.get("display_name", "?") for u in users}
+    player_db = get_player_db()
+
+    matchups = get_matchups(league_id, week)
+    matchup_by_roster = {
+        m["roster_id"]: m.get("matchup_id")
+        for m in matchups if m.get("roster_id") is not None
+    }
+
+    teams = []
+    my_roster_id = None
+    for r in rosters:
+        roster_id = r["roster_id"]
+        if r.get("owner_id") == user_id:
+            my_roster_id = roster_id
+        starters = r.get("starters", [])
+        teams.append({
+            "roster_id": roster_id,
+            "manager": user_map.get(r.get("owner_id", ""), "Unknown"),
+            "players": _resolve_players(r.get("players", []), player_db, starters),
+            "matchup_id": matchup_by_roster.get(roster_id),
+        })
+
+    opponent_roster_id = None
+    my_matchup_id = matchup_by_roster.get(my_roster_id) if my_roster_id is not None else None
+    if my_matchup_id is not None:
+        for t in teams:
+            if t["roster_id"] != my_roster_id and t["matchup_id"] == my_matchup_id:
+                opponent_roster_id = t["roster_id"]
+                break
+
+    return {
+        "week": week,
+        "teams": teams,
+        "my_roster_id": my_roster_id,
+        "opponent_roster_id": opponent_roster_id,
     }
 
 

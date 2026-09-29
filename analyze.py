@@ -13,7 +13,14 @@ from datetime import datetime
 
 # Import the other modules
 from pull_roster import build_roster_data, load_config
-from pull_stats import pull_player_stats, summarize_player, pull_injuries
+from pull_stats import (
+    current_nfl_week,
+    pull_injuries,
+    pull_player_stats,
+    summarize_player,
+    week_mismatch_note,
+    week_progress,
+)
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
@@ -121,7 +128,15 @@ def build_weekly_report(config):
             bench.append(entry)
 
     # Generate markdown
-    md = generate_markdown(roster_data, starters, bench, week, season)
+    real_week = current_nfl_week(schedule)
+    stale = week_mismatch_note(week, real_week)
+    if stale:
+        print(f"\n  WARNING: {stale}")
+
+    md = generate_markdown(
+        roster_data, starters, bench, week, season, real_week,
+        week_progress(schedule, week),
+    )
 
     # Write output
     filename = f"week_{week:02d}.md"
@@ -173,6 +188,10 @@ def format_player_line(entry):
             stat_parts.append(f"PPG: {stats['fantasy_points_ppr_per_game']}")
 
     elif pos == "K":
+        if stats.get("fg_att"):
+            stat_parts.append(f"FG: {stats.get('fg_made', 0)}/{stats['fg_att']}")
+        if stats.get("pat_made"):
+            stat_parts.append(f"PAT: {stats['pat_made']}")
         if stats.get("fantasy_points_per_game"):
             stat_parts.append(f"PPG: {stats['fantasy_points_per_game']}")
 
@@ -185,7 +204,7 @@ def format_player_line(entry):
     return line
 
 
-def generate_markdown(roster_data, starters, bench, week, season):
+def generate_markdown(roster_data, starters, bench, week, season, real_week=None, progress=None):
     """Build the final markdown output."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -194,6 +213,32 @@ def generate_markdown(roster_data, starters, bench, week, season):
 **Matchup:** vs {roster_data['matchup']['opponent']}
 **Generated:** {now}
 """
+
+    if real_week:
+        md += f"**Live NFL week:** {real_week}\n"
+
+    # How much of this week is already decided. Without it, a report generated
+    # mid-week reads as entirely forward-looking when most slots have locked.
+    final, total = progress or (0, 0)
+    if total:
+        md += f"**Games final:** {final}/{total}\n"
+        if final == total:
+            md += (
+                f"\n> **Week {week} is complete.** Every game is final, so no lineup"
+                f" change is possible — the stat lines below already include this"
+                f" week. Use this as the setup for week {week + 1}.\n"
+            )
+        elif final:
+            md += (
+                f"\n> **Week {week} is {final}/{total} played.** Only players in the"
+                f" remaining {total - final} game(s) can still be moved; everyone"
+                f" else has locked.\n"
+            )
+
+    # A stale current_week produces a right-looking report for the wrong week.
+    stale = week_mismatch_note(week, real_week)
+    if stale:
+        md += f"\n> **⚠️ Wrong week:** {stale}\n"
 
     # Early in a season nflverse has not published the current year yet, so the
     # stat lines below are last year's. Say so, or they read as current form.

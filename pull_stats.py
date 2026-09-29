@@ -11,6 +11,7 @@ does exist. The schedule is published in advance and is not backfilled.
 import json
 import os
 import re
+from datetime import date, datetime
 
 import nflreadpy as nfl
 
@@ -109,6 +110,109 @@ def pull_schedule(season):
     return df.to_dicts()
 
 
+def _gameday(game):
+    """A schedule row's date as a date object, or None if absent/unparseable."""
+    raw = game.get("gameday")
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(str(raw)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def week_progress(schedule, week):
+    """(games_final, games_scheduled) for a week — how much of it is decided."""
+    games = [g for g in schedule if g.get("week") == week]
+    return sum(1 for g in games if g.get("result") is not None), len(games)
+
+
+def current_nfl_week(schedule, today=None):
+    """
+    The week to report on, derived from the schedule's game dates and results.
+    Returns None when the schedule is empty.
+
+    config.json's current_week is hand-maintained and goes stale the moment a
+    week turns over, which silently produces a report for the wrong week —
+    right-looking output, wrong matchups. Callers compare the two and say so.
+
+    Rolls forward in two situations, because a week you can no longer act on is
+    not the week you want analysis for:
+
+    - Between weeks (the Tue/Wed gap), to the next week with games. This is when
+      you are actually setting the next lineup.
+    - When today still falls inside a week's date span but every one of its games
+      is final — the Monday-night-is-over case. Without this, a Monday or late
+      Sunday run returns a week whose lineup has already locked.
+
+    A week with any game still unplayed stays current: those slots are live.
+    """
+    today = today or date.today()
+
+    spans = {}
+    for game in schedule:
+        week = game.get("week")
+        day = _gameday(game)
+        if week is None or day is None:
+            continue
+        low, high = spans.get(week, (day, day))
+        spans[week] = (min(low, day), max(high, day))
+
+    if not spans:
+        return None
+
+    for week in sorted(spans):
+        low, high = spans[week]
+        if low <= today <= high:
+            final, total = week_progress(schedule, week)
+            if total and final == total:
+                break  # week is done; fall through to the next one
+            return week
+
+    upcoming = [week for week in sorted(spans) if spans[week][0] > today]
+    if upcoming:
+        return upcoming[0]
+
+    return max(spans)  # season is over; the last week is as current as it gets
+
+
+def week_mismatch_note(config_week, real_week):
+    """
+    One line naming the gap between the week being reported and the real one,
+    or None when they agree. Shared so every report words it the same way.
+    """
+    if real_week is None or config_week == real_week:
+        return None
+    direction = "behind" if config_week < real_week else "ahead of"
+    return (
+        f"config.json says week {config_week}, but the NFL is in **week {real_week}** "
+        f"as of {date.today():%b %d, %Y} — this report is {direction} the live week. "
+        f"Bump `current_week` in config.json to {real_week} and re-run."
+    )
+
+
+def pull_schedule_history(season, seasons_back):
+    """
+    Completed games from `seasons_back` seasons ago through `season`, as a list
+    of dicts — the raw material for head-to-head series records.
+
+    Only rows with a `result` are returned, so unplayed games never count as
+    history. Deliberately does not use _load_with_fallback: an empty list is a
+    usable answer here ("no history found") and walking seasons back would
+    silently change the window a caller thinks it asked for.
+    """
+    print(f"Pulling schedule history ({seasons_back} seasons back)...")
+    seasons = list(range(season - seasons_back, season + 1))
+    try:
+        df = nfl.load_schedules(seasons=seasons)
+    except (ConnectionError, ValueError) as e:
+        print(f"  schedule history: unavailable ({type(e).__name__})")
+        return []
+    games = [g for g in df.to_dicts() if g.get("result") is not None]
+    print(f"  schedule history: {len(games)} completed games {seasons[0]}-{season}")
+    return games
+
+
 # Name index is rebuilt only when a different stats frame comes through.
 _index_cache = {"key": None, "index": None}
 
@@ -138,6 +242,27 @@ def _per_game(total, games):
     return round(total / games, 1)
 
 
+# nflverse does not score kicking — every kicker's fantasy_points is 0.0, which
+# made K a permanently statless position here. Points are rebuilt from the
+# made-kick columns using the near-universal distance tiers. Misses are not
+# penalized: that value is league-specific and Sleeper's setting is not exposed
+# to this pipeline, so this is a floor on a kicker's real fantasy output.
+KICKER_FG_POINTS = {
+    "fg_made_0_19": 3,
+    "fg_made_20_29": 3,
+    "fg_made_30_39": 3,
+    "fg_made_40_49": 4,
+    "fg_made_50_59": 5,
+    "fg_made_60_": 5,
+}
+
+
+def _kicker_points(row):
+    """Fantasy points from a kicker's made field goals and extra points."""
+    made = sum((row.get(col) or 0) * points for col, points in KICKER_FG_POINTS.items())
+    return made + (row.get("pat_made") or 0)
+
+
 def summarize_player(all_stats, name):
     """
     Condense one player's season totals into the keys format_player_line reads.
@@ -152,6 +277,12 @@ def summarize_player(all_stats, name):
         return None
 
     games = row.get("games") or 0
+
+    # Kickers come through with fantasy_points == 0.0; rebuild it from the
+    # kicking columns so a K is comparable to anything else.
+    standard_points = row.get("fantasy_points")
+    if not standard_points and row.get("position") == "K":
+        standard_points = _kicker_points(row)
 
     summary = {
         "games": games,
@@ -168,10 +299,13 @@ def summarize_player(all_stats, name):
         "receiving_yards": row.get("receiving_yards"),
         "receiving_tds": row.get("receiving_tds"),
         "avg_target_share": row.get("target_share"),
+        "fg_made": row.get("fg_made"),
+        "fg_att": row.get("fg_att"),
+        "pat_made": row.get("pat_made"),
         "fantasy_points_ppr_per_game": _per_game(row.get("fantasy_points_ppr"), games),
         # Kickers are scored the same in PPR and standard; the K line reads
         # the non-PPR key.
-        "fantasy_points_per_game": _per_game(row.get("fantasy_points"), games),
+        "fantasy_points_per_game": _per_game(standard_points, games),
     }
 
     # Drop empties so format_player_line's truthiness checks stay meaningful.
