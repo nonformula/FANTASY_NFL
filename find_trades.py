@@ -197,6 +197,169 @@ def find_free_agents(league, player_db, all_stats, my_positions):
     return upgrades, sorted(available_defenses)
 
 
+def _ordinal(n):
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
+
+
+def waiver_cycles_left(waivers, week):
+    """
+    Roughly how many weekly waiver runs remain before the playoffs. Budget
+    advice is meaningless without it: $100 in week 3 is a different asset than
+    $100 in week 13.
+    """
+    playoff_start = waivers.get("playoff_week_start")
+    if not playoff_start or week is None:
+        return None
+    return max(playoff_start - week, 0)
+
+
+# Positions where the waiver pool is deep enough that the player is a
+# commodity: there is always another one, so they are streamed, never bid up.
+STREAMED_POSITIONS = {"K", "DEF"}
+
+
+def _scarcity_factor(total_better):
+    """
+    Scale a bid by how replaceable the player is. If 29 other free agents clear
+    the same bar, missing this one costs nothing — paying a premium for him is
+    the most common way to waste a budget. If only one or two do, he is the
+    market.
+    """
+    if total_better <= 2:
+        return 1.5
+    if total_better <= 5:
+        return 1.0
+    if total_better <= 12:
+        return 0.6
+    return 0.35
+
+
+def bid_guidance(candidate, bar_ppg, no_bench, waivers, cycles, total_better=1):
+    """
+    A bid band for one free agent, as dollars out of the budget you have left.
+
+    Deliberately a spend-pacing heuristic, not a valuation: there are no
+    projections or market prices here. It starts from the even-pace spend
+    (budget remaining / cycles remaining), scales it by how much of an upgrade
+    the player is, how replaceable he is, and whether the position has any bench
+    behind it, then caps any single claim so one add cannot eat the season.
+    """
+    me = waivers.get("me") or {}
+    remaining = me.get("remaining")
+    if not waivers.get("is_faab") or remaining is None:
+        return None
+
+    delta = candidate["ppg"] - bar_ppg
+    pace = (remaining / cycles) if cycles else remaining
+
+    if no_bench or delta >= 5:
+        tier, low, high, cap = "priority", pace * 1.5, pace * 3, remaining * 0.25
+    elif delta >= 2:
+        tier, low, high, cap = "depth", pace * 0.5, pace * 1.5, remaining * 0.12
+    else:
+        tier, low, high, cap = "marginal", 0, pace * 0.5, remaining * 0.05
+
+    scarcity = _scarcity_factor(total_better)
+    low, high = low * scarcity, high * scarcity
+    if scarcity < 0.5:
+        tier += ", replaceable"
+
+    # A kicker or defense is never worth real budget — there is always another.
+    if candidate["position"] in STREAMED_POSITIONS:
+        tier = "stream"
+        cap = min(cap, max(remaining * 0.03, 2))
+        low, high = 0, min(high, cap)
+
+    # One game is a sample, not a trend — don't pay trend prices for it.
+    if candidate["games"] and candidate["games"] <= 1:
+        tier += ", one-game sample"
+        low, high = low * 0.5, high * 0.5
+
+    low, high = int(min(low, cap)), max(int(min(high, cap)), 1)
+    # FAAB ties are broken by waiver position, so a round number loses to
+    # anyone who added a dollar. Bid just off the round figure.
+    if high % 5 == 0:
+        high += 1
+    return {"tier": tier, "low": max(low, waivers.get("bid_min") or 0), "high": high}
+
+
+def waiver_strategy(waivers, week, cycles):
+    """
+    What this league's waiver rules mean for you specifically — read off the
+    real budgets, not assumed. Under FAAB, position is only a tiebreaker, so
+    the usual "I pick 9th, I can't get anyone" intuition does not apply.
+    """
+    me = waivers.get("me") or {}
+    others = [t for t in waivers["teams"] if not t["is_me"]]
+    notes = []
+
+    if not waivers.get("is_faab"):
+        notes.append(
+            f"This league uses **{waivers['type_label']}**, so waiver *order* gates who gets a "
+            f"player. You are **{me.get('position')} of {waivers['num_teams']}** — claims will lose "
+            f"to anyone ahead of you, so target players the teams above you do not need."
+        )
+        return notes
+
+    budget = waivers["budget"]
+    remaining = me.get("remaining")
+    spent_others = [t["spent"] for t in others]
+    unspent_rivals = sum(1 for s in spent_others if not s)
+    richest = max(others, key=lambda t: t["remaining"]) if others else None
+
+    notes.append(
+        f"**FAAB, not priority.** Budget is ${budget} for the season; you have **${remaining} left** "
+        f"and have spent ${me.get('spent', 0)}. Your waiver position "
+        f"(**{me.get('position')} of {waivers['num_teams']}**) is therefore **only the tiebreaker "
+        f"between equal bids** — it does not stop you from winning a claim. Outbidding does."
+    )
+
+    if remaining is not None and budget:
+        richer = sum(1 for t in others if (t["remaining"] or 0) > remaining)
+        tied = sum(1 for t in others if t["remaining"] == remaining)
+        if richer == 0 and tied:
+            standing = (
+                f"are **tied for the largest budget** with "
+                f"{tied} other team{'s' if tied != 1 else ''}"
+            )
+        elif richer == 0:
+            standing = "have **the largest budget in the league**"
+        else:
+            standing = (
+                f"have the **{_ordinal(richer + 1)} largest budget**, behind "
+                f"{richer} team{'s' if richer != 1 else ''}"
+            )
+        notes.append(
+            f"You {standing}. {unspent_rivals} of {len(others)} rivals have spent nothing at "
+            f"all, and the most anyone has spent is ${max(spent_others) if spent_others else 0} — "
+            f"this is an uncontested market so far"
+            + (f", with {richest['manager']} the other deep pocket at ${richest['remaining']}."
+               if richest and richest["remaining"] != remaining else ".")
+        )
+
+    if cycles:
+        pace = remaining / cycles if remaining else 0
+        notes.append(
+            f"About **{cycles} weekly waiver runs** remain before playoffs (week "
+            f"{waivers['playoff_week_start']}). Spread evenly that is **${pace:.0f} per week** — "
+            f"treat that as the pace, and go well above it for a real starter, well below for a stream."
+        )
+
+    if waivers.get("bid_min") == 0:
+        notes.append(
+            "Minimum bid is **$0**, so an uncontested add costs nothing — but a $0 bid loses every "
+            "tie, and ties go to waiver position."
+        )
+
+    notes.append(
+        "Because ties break on position, **avoid round numbers** — $6 beats a $5 bid, and most "
+        "managers bid in fives."
+    )
+    return notes
+
+
 def find_trade_candidates(my_team, other_teams, all_stats):
     """
     For each other team, find the position they most out-roster you at and
@@ -335,7 +498,35 @@ def format_weak_spots(my_positions):
     return md + "\n".join(rows) + "\n"
 
 
-def format_free_agents(upgrades, available_defenses, my_positions):
+def format_waivers(waivers, week, cycles):
+    md = "\n## Waiver Position & Budget\n"
+    for note in waiver_strategy(waivers, week, cycles):
+        md += f"\n- {note}\n"
+
+    md += "\n| | Manager | Pos | Spent | Left | Record |\n|---|---|---|---|---|---|\n"
+    for t in waivers["teams"]:
+        marker = "**→**" if t["is_me"] else ""
+        name = f"**{t['manager']}**" if t["is_me"] else t["manager"]
+        left = "?" if t["remaining"] is None else f"${t['remaining']}"
+        md += f"| {marker} | {name} | {t['position']} | ${t['spent']} | {left} | {t['record']} |\n"
+
+    schedule_bits = []
+    if waivers.get("is_daily"):
+        schedule_bits.append("daily waivers")
+    else:
+        # Sleeper stores a 0-6 day index; 0 is Sunday, so 2 reads as Tuesday.
+        # Worth confirming once in the app rather than trusting the mapping.
+        day = waivers.get("day_of_week")
+        schedule_bits.append(f"weekly waivers, day index {day} (Sunday=0, so likely Tuesday)")
+    if waivers.get("clear_days") is not None:
+        schedule_bits.append(f"{waivers['clear_days']}-day claim window")
+    if waivers.get("trade_deadline"):
+        schedule_bits.append(f"trade deadline week {waivers['trade_deadline']}")
+    md += f"\n*League rules: {'; '.join(schedule_bits)}.*\n"
+    return md
+
+
+def format_free_agents(upgrades, available_defenses, my_positions, waivers=None, cycles=None):
     md = "\n## Free Agent Upgrades\n"
     md += (
         "\nEvery player below is on **no roster in this league** — computed by diffing the"
@@ -357,7 +548,8 @@ def format_free_agents(upgrades, available_defenses, my_positions):
                 f"beating {bar['name']} at {_fmt_sample(bar['ppg'], bar['games'])}"
                 if bar else "you have nobody rostered here"
             )
-            depth_note = " — **no bench here**" if my_positions.get(pos, {}).get("no_bench") else ""
+            no_bench = my_positions.get(pos, {}).get("no_bench")
+            depth_note = " — **no bench here**" if no_bench else ""
             md += f"\n**{pos}** ({bar_text}{depth_note})\n"
             for c in info["options"]:
                 line = f"  - **{c['name']}** ({c['team']}) — {_fmt_sample(c['ppg'], c['games'])}"
@@ -367,6 +559,13 @@ def format_free_agents(upgrades, available_defenses, my_positions):
                     line += f", depth chart #{c['depth_chart_order']}"
                 if c["injury_status"]:
                     line += f", ⚠️ {c['injury_status']}"
+                bid = (
+                    bid_guidance(c, info["bar_ppg"], no_bench, waivers, cycles, info["total_better"])
+                    if waivers else None
+                )
+                if bid:
+                    span = f"${bid['low']}-{bid['high']}" if bid["low"] != bid["high"] else f"${bid['high']}"
+                    line += f" — bid **{span}** ({bid['tier']})"
                 md += line + "\n"
             if info["total_better"] > len(info["options"]):
                 md += f"  - ...and {info['total_better'] - len(info['options'])} more clearing that bar\n"
@@ -381,7 +580,8 @@ def format_free_agents(upgrades, available_defenses, my_positions):
 
 
 def generate_markdown(opponent_team, candidates, thin_positions, injured_starters, week,
-                      real_week=None, my_positions=None, upgrades=None, available_defenses=None):
+                      real_week=None, my_positions=None, upgrades=None, available_defenses=None,
+                      waivers=None):
     md = f"# League Scan — Week {week}\n\n"
 
     # A stale week here means the advantage section scanned the wrong opponent.
@@ -389,9 +589,15 @@ def generate_markdown(opponent_team, candidates, thin_positions, injured_starter
     if stale:
         md += f"> **⚠️ Wrong week:** {stale}\n\n"
 
+    cycles = waiver_cycles_left(waivers, week) if waivers else None
+
     if my_positions:
         md += format_weak_spots(my_positions)
-        md += format_free_agents(upgrades or {}, available_defenses or [], my_positions)
+        if waivers:
+            md += format_waivers(waivers, week, cycles)
+        md += format_free_agents(
+            upgrades or {}, available_defenses or [], my_positions, waivers, cycles
+        )
         md += "\n"
 
     md += "## Suggested Trades\n"
@@ -469,7 +675,7 @@ if __name__ == "__main__":
 
             md = generate_markdown(
                 opponent_team, candidates, thin_positions, injured_starters, week, real_week,
-                my_positions, upgrades, available_defenses,
+                my_positions, upgrades, available_defenses, league.get("waivers"),
             )
 
             filename = f"week_{week:02d}_trades.md"

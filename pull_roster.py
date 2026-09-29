@@ -188,6 +188,64 @@ def build_roster_data(config):
     }
 
 
+# Sleeper's league settings.waiver_type. 2 is FAAB (a blind-bid budget); the
+# others are order-based. Which one it is changes what "waiver position" means:
+# under an order-based system it gates who gets a player at all, under FAAB it
+# is only the tiebreaker between equal bids.
+WAIVER_TYPE_FAAB = 2
+WAIVER_TYPE_LABELS = {0: "rolling priority", 1: "reverse standings", 2: "FAAB (blind bidding)"}
+
+
+def build_waiver_context(league, rosters, user_map, user_id):
+    """
+    Who can actually win a waiver claim, and at what cost.
+
+    Every roster carries settings.waiver_position and settings.waiver_budget_used,
+    which is the only place this pipeline can learn that a recommended add may
+    be unwinnable — or free. Rival budgets matter as much as your own: an
+    uncontested market means a minimum bid takes the player.
+    """
+    settings = league.get("settings", {})
+    waiver_type = settings.get("waiver_type")
+    budget = settings.get("waiver_budget")
+
+    teams = []
+    mine = None
+    for r in rosters:
+        rs = r.get("settings", {})
+        spent = rs.get("waiver_budget_used", 0) or 0
+        entry = {
+            "roster_id": r["roster_id"],
+            "manager": user_map.get(r.get("owner_id", ""), "Unknown"),
+            "position": rs.get("waiver_position"),
+            "spent": spent,
+            "remaining": (budget - spent) if budget is not None else None,
+            "record": f"{rs.get('wins', 0)}-{rs.get('losses', 0)}",
+            "is_me": r.get("owner_id") == user_id,
+        }
+        if entry["is_me"]:
+            mine = entry
+        teams.append(entry)
+
+    teams.sort(key=lambda t: (t["position"] is None, t["position"]))
+
+    return {
+        "type": waiver_type,
+        "type_label": WAIVER_TYPE_LABELS.get(waiver_type, f"unknown ({waiver_type})"),
+        "is_faab": waiver_type == WAIVER_TYPE_FAAB,
+        "budget": budget,
+        "bid_min": settings.get("waiver_bid_min"),
+        "is_daily": bool(settings.get("daily_waivers")),
+        "day_of_week": settings.get("waiver_day_of_week"),
+        "clear_days": settings.get("waiver_clear_days"),
+        "playoff_week_start": settings.get("playoff_week_start"),
+        "trade_deadline": settings.get("trade_deadline"),
+        "num_teams": settings.get("num_teams") or len(rosters),
+        "me": mine,
+        "teams": teams,
+    }
+
+
 def get_league_rosters(config):
     """
     Pull every roster in the league, resolved to player names/positions —
@@ -201,6 +259,7 @@ def get_league_rosters(config):
     week = config["current_week"]
 
     user_id, _ = get_user_id(username)
+    league = get_league_info(league_id)
     rosters = get_rosters(league_id)
     users = get_league_users(league_id)
     user_map = {u["user_id"]: u.get("display_name", "?") for u in users}
@@ -239,6 +298,7 @@ def get_league_rosters(config):
         "teams": teams,
         "my_roster_id": my_roster_id,
         "opponent_roster_id": opponent_roster_id,
+        "waivers": build_waiver_context(league, rosters, user_map, user_id),
     }
 
 

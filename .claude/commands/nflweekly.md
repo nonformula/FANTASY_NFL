@@ -83,20 +83,33 @@ From `output/week_<NN>_trades.md`. Frame the whole section as acquisition: what 
 roster, and who fixes it — off waivers first, by trade second. Name specific players; there is real
 roster and availability data behind every name here.
 
-**Free agents first**, because they cost nothing but a roster spot. Lead with the positions where
+**Open with the waiver situation**, from the scan's Waiver Position & Budget section — it decides
+what any of the rest is worth. Give the format (FAAB vs an order-based system), the budget left, the
+waiver position and **what that position actually means in this format**: under FAAB it is only the
+tiebreaker between equal bids, so it does not gate acquisitions; under rolling priority or reverse
+standings it does. Then say where that leaves them against the field: how many rivals have spent
+nothing, who the deep pockets are, and roughly how many waiver runs remain before the playoffs.
+Finish with the concrete tactic — the scan computes a per-player bid band, so carry those numbers
+through rather than inventing your own.
+
+**Then free agents**, because they cost only budget and a roster spot. Lead with the positions where
 the scan says there's **no bench**, since that's where an injury has no in-house answer. For each
-one worth acting on, give the player, his production with its sample size, and whether he's his NFL
-team's starter — a depth-chart #2 or #3 with a good two weeks is a different bet than a #1. Say
-what to drop to make room. Two caveats to carry, both honest:
+one worth acting on, give the player, his production with its sample size, whether he's his NFL
+team's starter — a depth-chart #2 or #3 with a good two weeks is a different bet than a #1 — and the
+bid band with its tier. Say what to drop to make room. Three caveats to carry, all honest:
 
 - The scan ranks on **current production only** — there are no projections in this pipeline, so a
   high PPG over one or two games is a small sample, not a forecast. Say so when the sample is thin.
-- Unrostered means available, but Sleeper may route a recently-dropped player through **waivers**
-  rather than a free add, so a claim may need priority or FAAB.
+- **Replaceability sets the price, not just production.** When the scan says another 20-odd players
+  clear the same bar, missing this one costs nothing and a premium bid is wasted; when only a few
+  clear it, that is where the budget should go. The bid tiers already reflect this — don't override
+  them upward.
+- Kickers and defenses are **streams, not investments**, however much the position lacks a bench.
 
 **Then the trade.** Pass along the scan's suggested offer, and say which side of the deal actually
 helps this team and why. Compare it honestly against the free agent option: if an FA at that
-position is as good or better, the trade isn't worth making, and you should say that.
+position is as good or better — and cheaper than what the trade costs — the trade isn't worth
+making, and you should say that.
 
 **Then the opponent advantage** points. If the scan found nothing in a subsection, say so in a line
 rather than dropping it.
