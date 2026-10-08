@@ -5,8 +5,9 @@
 **Analysis date:** 2026-10-08 (Thursday)
 
 The report header is clean: stats resolved to 2026, the live NFL week matches `config.json`, and
-**Games final: 0/15**, so nothing has locked yet. When this run started, `config.json` was still on
-week 4. Step 0 moved it to 5 before anything was generated, so these reports are for week 5.
+**Games final: 0/15**, so nothing has locked yet. Earlier today `config.json` was still on week 4,
+and Step 0 moved it to 5. This regeneration (15:35) found it already in sync, and every number
+below matches the rebuilt reports.
 **One deadline:** TB @ DAL is tonight at 20:15, so Egbuka and Gainwell lock today. Make move 1
 before kickoff.
 
@@ -211,5 +212,5 @@ favored by 3 in a dome. The last meeting was 44-42. Josh Allen is 2-1 as a start
   The roster section and the trade lines don't.
 - **Higgins shows Questionable with no injury text.** The Sleeper tag is present but the
   body-part field is empty, so the report can't say what the risk is.
-- **`config.json` was stale again.** It was still on week 4 at the start of this run, and Step 0
-  corrected it to 5.
+- **`config.json` was stale again.** It was still on week 4 at the start of today's first run, and
+  Step 0 corrected it to 5. The 15:35 regeneration confirmed it was in sync.
