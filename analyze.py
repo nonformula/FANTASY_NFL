@@ -32,8 +32,6 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # as "do not start this player."
 TEAM_ALIASES = {
     "LAR": "LA",
-    "JAX": "JAC",
-    "WAS": "WSH",
     "OAK": "LV",
     "SD": "LAC",
     "STL": "LA",
