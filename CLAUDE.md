@@ -58,7 +58,7 @@ itself**. `.gitignore` is `output/*` with `!output/*_analysis.md`, so the three 
 
 On a python.org macOS build, `pull_roster.py` fails with `SSL: CERTIFICATE_VERIFY_FAILED` because `urllib` uses OpenSSL's default store, which those builds ship empty. `nflreadpy` is unaffected (it bundles certifi), so the failure looks like a Sleeper-only problem. Fix once with `/Applications/Python\ 3.12/Install\ Certificates.command`.
 
-`config.json` is gitignored; `config.example.json` is the tracked template. `config.json` ships with `YOUR_USERNAME_HERE` / `YOUR_LEAGUE_ID_HERE` placeholders. Both entry points guard on the literal substring `"YOUR_"` in `sleeper_username` and print setup instructions instead of running — so an unconfigured checkout exits cleanly rather than hitting the API.
+`config.json` is gitignored; `config.example.json` is the tracked template. `config.json` ships with `YOUR_USERNAME_HERE` / `YOUR_LEAGUE_ID_HERE` placeholders. Every entry point (`analyze.py`, `find_trades.py`, `find_games.py`, `check_week.py`, `pull_roster.py`) guards on the literal substring `"YOUR_"` in `sleeper_username` and print setup instructions instead of running — so an unconfigured checkout exits cleanly rather than hitting the API.
 
 ## Season-boundary behavior — read this first
 
@@ -119,11 +119,11 @@ real output, not an exact league score. Don't "simplify" this back to reading `f
 
 Every read is a `.get()` with a falsy fallback, so a partial dict degrades gracefully rather than raising. Note the nflverse column for QB picks is `passing_interceptions`; `summarize_player` remaps it to the `interceptions` key `format_player_line` expects.
 
-`pull_injuries` dicts are probed permissively in `get_injury_status` (`analyze.py:36-45`) — name under `full_name` **or** `player_name`, status under `report_status` **or** `game_status`, injury text under `report_primary_injury` **or** `primary_injury` — because nflverse column naming varies by feed. Keep that tolerance when editing.
+`pull_injuries` dicts are probed permissively in `get_injury_status` (`analyze.py`) — name under `full_name` **or** `player_name`, status under `report_status` **or** `game_status`, injury text under `report_primary_injury` **or** `primary_injury` — because nflverse column naming varies by feed. Keep that tolerance when editing.
 
 ## Architecture
 
-Five scripts, coupled only through plain dicts:
+Five pipeline scripts (plus the `check_week.py` pre-flight described above), coupled only through plain dicts:
 
 1. **`pull_roster.py`** — Sleeper REST via `urllib.request` (stdlib; no `requests`, no API key, no auth). `build_roster_data(config)` is the main entry for the weekly report: it resolves username → `user_id`, fetches league settings, scans all rosters for the one whose `owner_id` matches, then resolves player IDs against the player DB and locates the week's matchup by pairing `matchup_id` across roster entries. Returns `None` (not an exception) on roster-not-found, and callers check for it. `get_league_rosters(config)` is the other entry point, used only by `find_trades.py`: it re-does the same roster/matchup calls but keeps *every* team's resolved players instead of discarding all but your own, plus which roster is your current-week opponent. Both share the private `_resolve_players` helper.
 2. **`pull_stats.py`** — nflverse data via `nflreadpy` (stats, injuries, schedule), with the season fallback described above.
@@ -137,7 +137,7 @@ Five scripts, coupled only through plain dicts:
 
 ### Things that constrain edits
 
-- **Two-tier caching, by design.** The Sleeper player DB (~30MB) is cached at `cache/players.json` and refreshed only when older than 24h (`pull_roster.py:36-49`). Stats are pulled fresh every run because nflverse updates Tue/Wed. Don't add caching to the stats path without a staleness check tighter than the game week.
+- **Two-tier caching, by design.** The Sleeper player DB (~30MB) is cached at `cache/players.json` and refreshed only when older than 24h (`get_player_db` in `pull_roster.py`). Stats are pulled fresh every run because nflverse updates Tue/Wed. Don't add caching to the stats path without a staleness check tighter than the game week.
 - **Name-based joining is the central fragility.** Sleeper gives numeric `player_id`s; stats are looked up by `full_name` string. `_normalize` in `pull_stats.py` folds case, punctuation, and generational suffixes ("A.J. Brown" ≡ "AJ Brown"), but any remaining mismatch silently yields a statless player rather than an error. If you touch the join, prefer adding an ID crosswalk (`nfl.load_ff_playerids()`) over loosening string matching further.
 - **Team abbreviations differ between the two sources.** nflverse calls the Rams `LA`, Sleeper calls them `LAR`. Unmatched teams render as `"BYE"` — a false bye that reads as "do not start this player," which is why `TEAM_ALIASES` exists in `analyze.py`. Add to it rather than special-casing at the call site; `find_games.py` imports it, so a missing alias there drops a game from "games to watch" entirely rather than mislabeling it.
 - **The `schedule` pull is wrapped in a bare `except Exception: pass`**; on failure every matchup renders `"?"`. A missing team-week still renders `"BYE"`, conflating a real bye with absent data.
