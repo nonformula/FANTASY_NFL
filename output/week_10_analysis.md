@@ -158,3 +158,19 @@ NYJ is 2-10 against BUF since 2020.
 - Burden (CHI) and Harvey (DEN) show **BYE**. CHI and DEN use the same team codes in Sleeper and
   nflverse, and neither team appears on the week 10 slate, so these are real byes and not the
   team-alias false BYE.
+
+---
+
+## UPDATE — Nacua ruled out (2026-11-11)
+
+Puka Nacua is **Out**. The FLEX plan above changes:
+
+| Change | In | Out | Why |
+|---|---|---|---|
+| FLEX | **Harold Fannin Jr.** (TE, CLE vs HOU, 1:00) | Puka Nacua | Only eligible bench player (11.4 PPG, 19.2% target share). He is Questionable, so confirm before 1:00 |
+| Add/Drop | **Emanuel Wilson** (RB, SEA @ LV, 4:05) | RJ Harvey | Backup in case Fannin sits. 10.7 PPG over 7 games, #3 on the depth chart. Unrostered, so it's a free add. If he's on waivers, bid $0-4 |
+
+- Cooper is Out, Harvey's team (DEN) is on bye, and Lawrence is a QB, so he can't play FLEX.
+- **Sunday:** start Fannin if he's active. If he's out or doubtful, start Wilson. Wilson's 4:05 kickoff comes after Fannin's status is known.
+- The PPG figures use full-PPR scoring. Fannin's 37 catches inflate his number more than Wilson's, so in half PPR the gap between them is smaller than it looks.
+- Neither replacement is close to Nacua's 24.8 PPG, so expect a lower score from that spot this week.
